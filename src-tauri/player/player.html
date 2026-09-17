@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Flow background player</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        background: #000;
+        overflow: hidden;
+      }
+      #stage {
+        position: absolute;
+        inset: 0;
+        overflow: hidden;
+      }
+      /* Cover the viewport like background-size: cover, in pure CSS.
+         The YT API sets width/height *attributes* on the iframe it creates;
+         these rules win over those, so sizing never depends on JS timing. */
+      #player {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        pointer-events: none;
+        border: 0;
+        /* Laid out at --scale times the viewport, then scaled back down by the
+           same factor. Visually identical, but YouTube picks its quality from
+           the player's CSS size, so a 2x layout makes it serve a 2x-sharper
+           stream on a Retina display instead of upscaling 720p. */
+        width: calc(100vw * var(--scale));
+        height: calc(56.25vw * var(--scale)); /* 100 / (16/9) */
+        min-width: calc(177.78vh * var(--scale)); /* 100 * (16/9) */
+        min-height: calc(100vh * var(--scale));
+        transform: translate(-50%, -50%) scale(calc(1 / var(--scale)));
+      }
+    </style>
+  </head>
+  <body>
+    <div id="stage"><div id="player"></div></div>
+    <script>
+      (function () {
+        var PARENT = window.parent;
+
+        // Render at the display's real pixel density so YouTube serves a stream
+        // that matches the screen rather than the CSS-pixel box.
+        function applyScale() {
+          var hq = window.location.hash.indexOf("hq=1") !== -1;
+          var scale = hq ? Math.min(window.devicePixelRatio || 1, 3) : 1;
+          document.documentElement.style.setProperty("--scale", String(scale));
+        }
+        applyScale();
+        window.addEventListener("resize", applyScale);
+        var player = null;
+        var ready = false;
+        var pending = [];
+
+        function post(event, extra) {
+          var msg = { source: "flow-player", event: event };
+          if (extra) for (var k in extra) msg[k] = extra[k];
+          // Parent is the Tauri window on a different (custom-scheme) origin,
+          // so "*" is the only workable target here. Messages carry no secrets.
+          PARENT.postMessage(msg, "*");
+        }
+
+        function videoIdFromUrl() {
+          var m = window.location.hash.match(/v=([\w-]{11})/);
+          return m ? m[1] : null;
+        }
+
+        // Position reporting for the app's playback bar. Posted at most once a
+        // second of video time so the parent doesn't re-render needlessly; a
+        // duration of 0 (live streams, or not loaded yet) tells the app there's
+        // nothing to scrub.
+        var lastSecond = -1;
+        var lastDuration = -1;
+
+        function reportTime() {
+          if (!player || !player.getDuration) return;
+          try {
+            var duration = player.getDuration() || 0;
+            var current = player.getCurrentTime() || 0;
+            var second = Math.floor(current);
+            if (second === lastSecond && duration === lastDuration) return;
+            lastSecond = second;
+            lastDuration = duration;
+            post("time", { current: current, duration: duration });
+          } catch (e) {
+            /* player torn down mid-poll */
+          }
+        }
+
+        function apply(cmd) {
+          if (!player) return;
+          try {
+            switch (cmd.action) {
+              case "play":
+                player.playVideo();
+                break;
+              case "pause":
+                player.pauseVideo();
+                break;
+              case "mute":
+                player.mute();
+                break;
+              case "unmute":
+                player.unMute();
+                break;
+              case "volume":
+                player.setVolume(cmd.value);
+                break;
+              case "seek":
+                // allowSeekAhead: the user let go of the scrubber, so it's
+                // worth asking for an unbuffered position.
+                player.seekTo(cmd.value, true);
+                reportTime();
+                break;
+              case "load":
+                if (cmd.value) {
+                  player.loadVideoById(cmd.value);
+                  player.mute();
+                }
+                break;
+            }
+          } catch (e) {
+            /* player torn down mid-command */
+          }
+        }
+
+        window.addEventListener("message", function (e) {
+          var d = e.data;
+          if (!d || d.source !== "flow") return;
+          if (!ready) pending.push(d);
+          else apply(d);
+        });
+
+        window.onYouTubeIframeAPIReady = function () {
+          var id = videoIdFromUrl();
+          if (!id) {
+            post("error", { code: 2 });
+            return;
+          }
+          player = new YT.Player("player", {
+            videoId: id,
+            playerVars: {
+              autoplay: 1,
+              controls: 0,
+              // Start muted so autoplay is never blocked; the app unmutes on request.
+              mute: 1,
+              loop: 1,
+              playlist: id,
+              modestbranding: 1,
+              rel: 0,
+              disablekb: 1,
+              fs: 0,
+              iv_load_policy: 3,
+              playsinline: 1,
+            },
+            events: {
+              onReady: function () {
+                ready = true;
+                post("ready");
+                for (var i = 0; i < pending.length; i++) apply(pending[i]);
+                pending = [];
+                reportTime();
+                // Polling rather than relying on state changes: YouTube gives
+                // no continuous time event, and this also keeps the bar honest
+                // while the video is paused or seeking.
+                setInterval(reportTime, 500);
+              },
+              onStateChange: function (e) {
+                if (e.data === YT.PlayerState.PLAYING) post("playing");
+                else if (e.data === YT.PlayerState.PAUSED) post("paused");
+                else if (e.data === YT.PlayerState.ENDED) {
+                  // loop=1 is unreliable for some videos; restart explicitly.
+                  try {
+                    player.seekTo(0);
+                    player.playVideo();
+                    reportTime();
+                  } catch (err) {}
+                }
+              },
+              onError: function (e) {
+                post("error", { code: e.data });
+              },
+            },
+          });
+        };
+
+        var s = document.createElement("script");
+        s.src = "https://www.youtube.com/iframe_api";
+        s.onerror = function () {
+          post("error", { code: -1 });
+        };
+        document.head.appendChild(s);
+
+        setTimeout(function () {
+          if (!ready) post("timeout");
+        }, 12000);
+      })();
+    </script>
+  </body>
+</html>
