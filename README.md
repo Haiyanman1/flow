@@ -60,7 +60,7 @@ Both windows load the same built frontend; the floating window just opens at the
 
 ## Running it locally
 
-Prerequisites: Node.js 18+, Rust (stable, via [rustup](https://rustup.rs)), and on macOS the Xcode Command Line Tools (`xcode-select --install`). For Windows, see the section below.
+Prerequisites: Node.js 22+ (the test runner's jsdom needs it), Rust (stable, via [rustup](https://rustup.rs)), and on macOS the Xcode Command Line Tools (`xcode-select --install`). For Windows, see the section below.
 
 ```bash
 npm install
@@ -97,7 +97,7 @@ Flow runs on Windows 10/11 too. Tauri can't cross-compile, so the Windows instal
 
 **Developing on Windows directly** (optional — only if you want `npm run tauri dev` on the PC)
 
-Install Node.js 20+, [rustup](https://rustup.rs) (choose the default MSVC toolchain), and Visual Studio Build Tools with the *Desktop development with C++* workload. Then `npm install` and `npm run tauri dev` as on macOS.
+Install Node.js 22+, [rustup](https://rustup.rs) (choose the default MSVC toolchain), and Visual Studio Build Tools with the *Desktop development with C++* workload. Then `npm install` and `npm run tauri dev` as on macOS.
 
 **What differs on Windows**
 
