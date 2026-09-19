@@ -10,6 +10,7 @@ Flow is a personal Pomodoro desktop app for Rajat, an engineering student at NTU
 - Rating colours are fixed: deep = green, okay = amber, shallow = rose — used consistently everywhere.
 - Language in the UI: a "focus area" is a module, skill, club or any project — never assume it's a university module.
 - Don't wipe or rewrite the user's real data. `history.json` and `settings.json` live in the app data directory; treat them as precious. New settings fields must have defaults (`#[serde(default)]` on the Rust side) so old files keep loading.
+- One codebase for both platforms, always on `main` — never separate Mac/Windows branches. When Rajat asks for something "only on Windows" or "only on Mac", gate it: `isMac` from `src/lib/platform.ts` in the frontend, `#[cfg(target_os = "...")]` in Rust, `tauri.windows.conf.json` for config. A platform-specific feature is code that doesn't run on the other platform, not a fork.
 
 ## Commands
 
